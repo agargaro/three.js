@@ -58,6 +58,7 @@
 
 			let stats;
 			let camera, scene, renderer;
+			let triangles, renderedInstances;
 
 			const instancesCount = 500000;
 			let batchedMesh;
@@ -82,7 +83,6 @@
 				camera.position.set( 0, 10, 50 );
 
 				scene = new THREE.Scene();
-				scene.fog = new THREE.Fog( 0x000000, 500, 600 );
 
 				const ambient = new THREE.AmbientLight();
 				scene.add( camera, ambient );
@@ -178,6 +178,14 @@
 				const gui = new GUI();
 
 				gui.add( batchedMesh, 'instanceCount' ).disable();
+				gui.add( batchedMesh, 'sortObjects' );
+				triangles = gui.add( renderer.info.render, 'triangles' ).disable();
+				renderedInstances = gui.add( batchedMesh, '_multiDrawCount' ).name( 'rendered instances' ).disable();
+				gui.add( camera, 'far', 100, 6000 ).onChange( () => {
+
+					camera.updateProjectionMatrix();
+
+				} );
 			
 				gui.add( config, 'freeze' ).onChange( v => {
 
@@ -267,6 +275,9 @@
 				renderer.render( scene, camera );
 
 				stats.end();
+
+				triangles.updateDisplay();
+				renderedInstances.updateDisplay();
 
 			}
 
