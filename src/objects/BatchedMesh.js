@@ -1078,6 +1078,8 @@ class BatchedMesh extends Mesh {
 		const matricesTexture = this._matricesTexture;
 		const matricesArray = this._matricesTexture.image.data;
 		matrix.toArray( matricesArray, instanceId * 16 );
+		// putting this here it's a bad idea
+		// matricesTexture.addUpdateRange( instanceId * 4, 4 );
 		matricesTexture.needsUpdate = true;
 
 		return this;
@@ -1635,6 +1637,7 @@ class BatchedMesh extends Mesh {
 
 		}
 
+		indirectTexture.addUpdateRange( 0, multiDrawCount );
 		indirectTexture.needsUpdate = true;
 		this._multiDrawCount = multiDrawCount;
 		this._visibilityChanged = false;

@@ -23,7 +23,10 @@
 		{
 			"imports": {
 				"three": "../build/three.module.js",
-				"three/addons/": "./jsm/"
+				"three/addons/": "./jsm/",
+
+				"@three.ez/batched-mesh-extensions": "https://cdn.jsdelivr.net/npm/@three.ez/batched-mesh-extensions@0.0.8/build/webgl.js",
+				"bvh.js": "https://cdn.jsdelivr.net/npm/bvh.js@0.0.13/build/index.js"
 			}
 		}
 	</script>
@@ -35,13 +38,19 @@
 		import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
 		import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-		import { radixSort } from 'three/addons/utils/SortUtils.js';
+		import { createRadixSort, extendBatchedMeshPrototype } from '@three.ez/batched-mesh-extensions';
+
+		// add and override BatchedMesh methods ( @three.ez/batched-mesh-extensions )
+		extendBatchedMeshPrototype();
 
 		let stats, gui, guiStatsEl;
 		let camera, controls, scene, renderer;
 		let geometries, mesh, material;
 		const ids = [];
 		const matrix = new THREE.Matrix4();
+		let sortFunction;
+		const white = new THREE.Color();
+		const red = new THREE.Color();
 
 		//
 
@@ -52,7 +61,7 @@
 
 		//
 
-		const MAX_GEOMETRY_COUNT = 20000;
+		const MAX_GEOMETRY_COUNT = 500000;
 
 		const Method = {
 			BATCHED: 'BATCHED',
@@ -61,13 +70,15 @@
 
 		const api = {
 			method: Method.BATCHED,
-			count: 256,
-			dynamic: 16,
+			count: 700000,
+			dynamic: 100,
 
 			sortObjects: true,
 			perObjectFrustumCulled: true,
 			opacity: 1,
 			useCustomSort: true,
+
+			partialUpdate: false
 		};
 
 		init();
@@ -78,9 +89,9 @@
 
 		function randomizeMatrix( matrix ) {
 
-			position.x = Math.random() * 40 - 20;
-			position.y = Math.random() * 40 - 20;
-			position.z = Math.random() * 40 - 20;
+			position.x = Math.random() * 1000 - 500;
+			position.y = Math.random() * 1000 - 500;
+			position.z = Math.random() * 1000 - 500;
 
 			rotation.x = Math.random() * 2 * Math.PI;
 			rotation.y = Math.random() * 2 * Math.PI;
@@ -117,7 +128,7 @@
 
 			if ( ! material ) {
 
-				material = new THREE.MeshNormalMaterial();
+				material = new THREE.MeshLambertMaterial();
 
 			}
 
@@ -178,6 +189,8 @@
 
 		function initBatchedMesh() {
 
+			mesh && mesh.dispose( THREE.WebGLCoordinateSystem );
+
 			const geometryCount = api.count;
 			const vertexCount = geometries.length * 512;
 			const indexCount = geometries.length * 1024;
@@ -202,6 +215,7 @@
 
 				const id = mesh.addInstance( geometryIds[ i % geometryIds.length ] );
 				mesh.setMatrixAt( id, randomizeMatrix( matrix ) );
+				mesh.setColorAt( id, red );
 
 				const rotationMatrix = new THREE.Matrix4();
 				rotationMatrix.makeRotationFromEuler( randomizeRotationSpeed( euler ) );
@@ -210,6 +224,11 @@
 				ids.push( id );
 
 			}
+
+			// compute tlas (top-level acceleration structure) bvh ( @three.ez/batched-mesh-extensions )
+			mesh.computeBVH( THREE.WebGLCoordinateSystem );
+
+			sortFunction = createRadixSort( mesh );
 
 			scene.add( mesh );
 
@@ -238,6 +257,10 @@
 			scene = new THREE.Scene();
 			scene.background = new THREE.Color( 0xffffff );
 
+			// lights
+
+			scene.add( new THREE.AmbientLight(), new THREE.DirectionalLight() );
+
 			// controls
 
 			controls = new OrbitControls( camera, renderer.domElement );
@@ -252,7 +275,7 @@
 			// gui
 
 			gui = new GUI();
-			gui.add( api, 'count', 1, MAX_GEOMETRY_COUNT ).step( 1 ).onChange( initMesh );
+			gui.add( api, 'count', 1, MAX_GEOMETRY_COUNT ).step( 1 ).onChange( initMesh ).disable();
 			gui.add( api, 'dynamic', 0, MAX_GEOMETRY_COUNT ).step( 1 );
 			gui.add( api, 'method', Method ).onChange( initMesh );
 			gui.add( api, 'opacity', 0, 1 ).onChange( v => {
@@ -276,6 +299,7 @@
 			gui.add( api, 'sortObjects' );
 			gui.add( api, 'perObjectFrustumCulled' );
 			gui.add( api, 'useCustomSort' );
+			gui.add( api, 'partialUpdate' );
 
 			guiStatsEl = document.createElement( 'li' );
 			guiStatsEl.classList.add( 'gui-stats' );
@@ -283,44 +307,6 @@
 			// listeners
 
 			window.addEventListener( 'resize', onWindowResize );
-
-		}
-
-		//
-
-		function sortFunction( list ) {
-
-			// initialize options
-			this._options = this._options || {
-				get: el => el.z,
-				aux: new Array( this.maxInstanceCount )
-			};
-
-			const options = this._options;
-			options.reversed = this.material.transparent;
-
-			let minZ = Infinity;
-			let maxZ = - Infinity;
-			for ( let i = 0, l = list.length; i < l; i ++ ) {
-
-				const z = list[ i ].z;
-				if ( z > maxZ ) maxZ = z;
-				if ( z < minZ ) minZ = z;
-
-			}
-
-			// convert depth to unsigned 32 bit range
-			const depthDelta = maxZ - minZ;
-			const factor = ( 2 ** 32 - 1 ) / depthDelta; // UINT32_MAX / z range
-			for ( let i = 0, l = list.length; i < l; i ++ ) {
-
-				list[ i ].z -= minZ;
-				list[ i ].z *= factor;
-
-			}
-
-			// perform a fast-sort using the hybrid radix sort function
-			radixSort( list, options );
 
 		}
 
@@ -339,6 +325,8 @@
 		function animate() {
 
 			animateMeshes();
+
+			// TODO here the onBeforeRender function is overriden by my library, so we are not testing the partial update of the indirect texture
 
 			controls.update();
 			stats.update();
@@ -361,7 +349,16 @@
 					mesh.getMatrixAt( id, matrix );
 					matrix.multiply( rotationMatrix );
 					mesh.setMatrixAt( id, matrix );
+					mesh.setColorAt( id, white );
 
+				}
+
+				if ( api.partialUpdate ) {
+
+					// TODO: fix update bug if partialUpdate is true on start, it should update the entire texture anyway
+					mesh._matricesTexture.addUpdateRange( 0, api.dynamic * 4 ); // * 4 because we need 4 pixels for matrix
+					mesh._colorsTexture.addUpdateRange( 0, api.dynamic );
+		
 				}
 
 			} else {
